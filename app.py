@@ -85,7 +85,7 @@ async def subscribe_symbols():
             "type": 1,
             "data": {
                 "subs": 1,
-                "symbols": ["NSE:BANKNIFTY25FEBFUT"],
+                "symbols": [os.getenv('SYMBOL')],
                 "mode": "depth",
                 "channel": "1"
             }
@@ -199,4 +199,4 @@ if __name__ == '__main__':
     ws_thread.start()
     
     # Run Flask application
-    socketio.run(app, debug=True, port=5001)
+    socketio.run(app, debug=True, port=5001, allow_unsafe_werkzeug=True)

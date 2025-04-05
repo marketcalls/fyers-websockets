@@ -37,6 +37,10 @@ A real-time market depth viewer application that connects to Fyers WebSocket API
 - Active Fyers trading account
 - Protocol Buffers compiler (protoc)
 
+##  Fyers API Credentials (How To)
+
+- Register a new App from URL: `https://myapi.fyers.in/` and activate the app
+
 ## Installation
 
 1. Clone the repository:
@@ -60,6 +64,18 @@ cp .env.example .env
 FYERS_APP_ID=your_app_id
 FYERS_ACCESS_TOKEN=your_access_token
 ```
+
+5. The `generate_token.py` script helps you generate an access token for the Fyers API:
+
+```
+python generate_token.py
+```
+
+This script will:
+1. Prompt you for your Fyers API credentials
+2. Open a browser window for authentication
+3. Generate an access token
+4. Optionally update the `.env` file with the new token
 
 ## Understanding WebSockets
 
