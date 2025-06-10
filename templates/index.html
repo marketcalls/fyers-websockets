@@ -4,8 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BANKNIFTY DOM Analyzer</title>
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@3.9.4/dist/full.css" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Local CSS -->
+    <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
+    <!-- DaisyUI -->
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@3.9.4/dist/full.css" rel="stylesheet" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         .bid-row:hover, .ask-row:hover {
@@ -173,7 +175,7 @@
             <div class="stats shadow hidden md:flex">
                 <div class="stat px-4 py-2">
                     <div class="stat-title text-xs">Symbol</div>
-                    <div class="stat-value text-md font-mono">BANKNIFTY25FEBFUT</div>
+                    <div class="stat-value text-md font-mono">{{ symbol }}</div>
                 </div>
                 <div class="stat px-4 py-2">
                     <div class="stat-title text-xs">Last Price</div>

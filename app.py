@@ -80,12 +80,17 @@ def process_market_depth(message_bytes):
 async def subscribe_symbols():
     """Subscribe to market depth data for symbols"""
     try:
-        # Initial subscription message - only BANKNIFTY
+        # Get symbol from environment variables
+        symbol = os.getenv('SYMBOL')
+        if not symbol:
+            raise ValueError("SYMBOL environment variable is not set in .env file")
+            
+        # Initial subscription message with symbol from .env
         subscribe_msg = {
             "type": 1,
             "data": {
                 "subs": 1,
-                "symbols": ["NSE:BANKNIFTY25FEBFUT"],
+                "symbols": [symbol],
                 "mode": "depth",
                 "channel": "1"
             }
@@ -182,7 +187,8 @@ async def websocket_client():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    symbol = os.getenv('SYMBOL', 'NSE:SYMBOL_NOT_SET')
+    return render_template('index.html', symbol=symbol.split(':')[-1])
 
 @socketio.on('connect')
 def handle_connect():

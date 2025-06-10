@@ -1,0 +1,12 @@
+{
+  "name": "fyers-websockets",
+  "version": "1.0.0",
+  "description": "BANKNIFTY DOM Analyzer",
+  "scripts": {
+    "build:css": "tailwindcss -i ./static/css/input.css -o ./static/css/styles.css --watch"
+  },
+  "dependencies": {
+    "daisyui": "^3.9.4",
+    "tailwindcss": "^3.4.1"
+  }
+}

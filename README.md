@@ -214,3 +214,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 If you found this project helpful, please consider giving it a ⭐!
+
+
+
+>> npm install
+>> 
+>> # Build the CSS
+>> npm run build:css
