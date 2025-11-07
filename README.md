@@ -160,12 +160,67 @@ The application calculates orderbook imbalances at three different depth levels 
 - **Real-time data visualization** with interactive charts
 - **Professional color scheme** for extended trading sessions
 
+## ⚖️ SEBI Compliance
+
+**This application now includes mandatory SEBI compliance features:**
+
+- ✅ **Daily Token Expiration**: Authentication tokens valid only for the day they're created
+- ✅ **Midnight Auto-Revocation**: All tokens automatically revoked at 3:00 AM daily
+- ✅ **Fresh Login Required**: Users must re-authenticate every trading day
+- ✅ **WebSocket Control**: Connections only allowed after successful authentication
+- ✅ **Session Validation**: Continuous checks for token freshness throughout the day
+
+**For detailed compliance documentation, see [SEBI_COMPLIANCE.md](SEBI_COMPLIANCE.md)**
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. **Clone & Setup**
+
+#### **Method 1: Using `uv` (Recommended - Modern & Fast)**
+
+[uv](https://github.com/astral-sh/uv) is a blazing-fast Python package installer and resolver.
+
 ```bash
+# Clone repository
 git clone https://github.com/marketcalls/fyers-websockets.git
 cd fyers-websockets
+
+# Create virtual environment with uv
+uv venv
+
+# Activate virtual environment
+source .venv/bin/activate  # macOS/Linux
+# OR
+.venv\Scripts\activate  # Windows
+
+# Install all dependencies using uv
+uv pip install -r requirements.txt
+
+# Or install using pyproject.toml
+uv pip install .
+```
+
+#### **Method 2: Using `pip` (Classical Method)**
+
+```bash
+# Clone repository
+git clone https://github.com/marketcalls/fyers-websockets.git
+cd fyers-websockets
+
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate  # macOS/Linux
+# OR
+venv\Scripts\activate  # Windows
+
+# Upgrade pip
+pip install --upgrade pip
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
@@ -196,13 +251,44 @@ API_KEY_PEPPER=your_secure_pepper_key_change_in_production
 > **📝 Note**: Visit [Fyers API Portal](https://myapi.fyers.in/) to create your app and get API credentials. This is for API access only - you'll need a separate Fyers Securities trading account for actual trading.
 
 ### 3. **Launch Application**
+
+#### **Using uv environment:**
 ```bash
+# Activate uv virtual environment (if not already activated)
+source .venv/bin/activate  # macOS/Linux
+# OR
+.venv\Scripts\activate  # Windows
+
+# Run the application
 python app.py
+```
+
+#### **Using pip environment:**
+```bash
+# Activate pip virtual environment (if not already activated)
+source venv/bin/activate  # macOS/Linux
+# OR
+venv\Scripts\activate  # Windows
+
+# Run the application
+python app.py
+```
+
+#### **Expected Startup Output:**
+```
+[SCHEDULER] Started APScheduler for SEBI compliance
+[SCHEDULER] Midnight token cleanup scheduled for 3:00 AM daily
+[WEBSOCKET] WebSocket client task started (waiting for login)
+ * Serving Flask app 'app'
+ * Debug mode: on
+ * Running on http://127.0.0.1:5000
 ```
 
 Visit `http://127.0.0.1:5000` and start analyzing market depth! 🎯
 
 > **🔗 First-time Setup**: You'll be redirected to Fyers OAuth login to authenticate your trading account and start receiving TBT data.
+>
+> **⚖️ SEBI Compliance**: You'll need to login fresh every trading day. Tokens automatically expire at 3:00 AM.
 
 ## 🔄 Authentication Flow
 

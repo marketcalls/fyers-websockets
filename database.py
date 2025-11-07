@@ -78,36 +78,45 @@ class Auth(Base):
     api_key = Column(Text, nullable=True)  # Encrypted API key
     api_secret = Column(Text, nullable=True)  # Encrypted API secret
     is_revoked = Column(Boolean, default=False)
+    login_date = Column(String(10), nullable=True)  # Date of login in YYYY-MM-DD format for SEBI compliance
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
 def init_db():
     """Initialize database tables"""
     Base.metadata.create_all(bind=engine)
-    
+
     # Check if we need to add new columns to existing auth table
     try:
         # Try to query with new columns to see if they exist
-        db_session.execute("SELECT api_key, api_secret FROM auth LIMIT 1")
+        db_session.execute("SELECT api_key, api_secret, login_date FROM auth LIMIT 1")
     except Exception as e:
         if "no such column" in str(e):
             print("Adding new columns to auth table...")
             try:
-                db_session.execute("ALTER TABLE auth ADD COLUMN api_key TEXT")
-                db_session.execute("ALTER TABLE auth ADD COLUMN api_secret TEXT")
+                # Add api_key and api_secret if missing
+                try:
+                    db_session.execute("SELECT api_key FROM auth LIMIT 1")
+                except:
+                    db_session.execute("ALTER TABLE auth ADD COLUMN api_key TEXT")
+                    print("Added api_key column")
+
+                try:
+                    db_session.execute("SELECT api_secret FROM auth LIMIT 1")
+                except:
+                    db_session.execute("ALTER TABLE auth ADD COLUMN api_secret TEXT")
+                    print("Added api_secret column")
+
+                try:
+                    db_session.execute("SELECT login_date FROM auth LIMIT 1")
+                except:
+                    db_session.execute("ALTER TABLE auth ADD COLUMN login_date TEXT")
+                    print("Added login_date column")
+
                 db_session.commit()
-                print("Successfully added api_key and api_secret columns")
+                print("Successfully added missing columns to auth table")
             except Exception as alter_error:
                 print(f"Error adding columns: {alter_error}")
-    
-    # Create default admin user if not exists
-    admin_user = User.query.filter_by(username='admin').first()
-    if not admin_user:
-        admin_user = User(username='admin', email='admin@fyers.com')
-        admin_user.set_password('admin123')  # Change this in production
-        db_session.add(admin_user)
-        db_session.commit()
-        print("Created default admin user (username: admin, password: admin123)")
 
 def encrypt_token(token):
     """Encrypt auth token"""
@@ -126,11 +135,16 @@ def decrypt_token(encrypted_token):
         return None
 
 def upsert_auth(name, auth_token, broker='fyers', user_id=None, api_key=None, api_secret=None, revoke=False):
-    """Store encrypted auth token, API key, and API secret"""
+    """Store encrypted auth token, API key, and API secret with login date for SEBI compliance"""
+    from datetime import datetime
+
     encrypted_token = encrypt_token(auth_token)
     encrypted_api_key = encrypt_token(api_key) if api_key else None
     encrypted_api_secret = encrypt_token(api_secret) if api_secret else None
-    
+
+    # Get current date in YYYY-MM-DD format for SEBI compliance
+    login_date = datetime.now().strftime('%Y-%m-%d') if not revoke else None
+
     auth_obj = Auth.query.filter_by(name=name).first()
     if auth_obj:
         auth_obj.auth = encrypted_token
@@ -139,15 +153,17 @@ def upsert_auth(name, auth_token, broker='fyers', user_id=None, api_key=None, ap
         auth_obj.api_key = encrypted_api_key
         auth_obj.api_secret = encrypted_api_secret
         auth_obj.is_revoked = revoke
+        auth_obj.login_date = login_date
     else:
         auth_obj = Auth(
-            name=name, 
-            auth=encrypted_token, 
-            broker=broker, 
+            name=name,
+            auth=encrypted_token,
+            broker=broker,
             user_id=user_id,
             api_key=encrypted_api_key,
             api_secret=encrypted_api_secret,
-            is_revoked=revoke
+            is_revoked=revoke,
+            login_date=login_date
         )
         db_session.add(auth_obj)
     db_session.commit()
@@ -215,3 +231,41 @@ def find_user_by_username(username=None):
     except Exception as e:
         print(f"Error finding user: {e}")
         return None
+
+def is_token_valid_for_today(name):
+    """Check if auth token is valid for today (SEBI compliance check)"""
+    from datetime import datetime
+    try:
+        auth_obj = Auth.query.filter_by(name=name, is_revoked=False).first()
+        if not auth_obj:
+            return False
+
+        # Check if login_date exists and matches today
+        today = datetime.now().strftime('%Y-%m-%d')
+        if auth_obj.login_date == today:
+            return True
+
+        # Token is from a previous day - revoke it for SEBI compliance
+        print(f"Token for {name} is from {auth_obj.login_date}, revoking for SEBI compliance")
+        auth_obj.is_revoked = True
+        auth_obj.login_date = None
+        db_session.commit()
+        return False
+    except Exception as e:
+        print(f"Error checking token validity: {e}")
+        return False
+
+def revoke_all_tokens():
+    """Revoke all authentication tokens (for midnight cleanup - SEBI compliance)"""
+    try:
+        count = Auth.query.filter_by(is_revoked=False).update({
+            'is_revoked': True,
+            'login_date': None
+        })
+        db_session.commit()
+        print(f"[SEBI COMPLIANCE] Revoked {count} active token(s) at midnight")
+        return count
+    except Exception as e:
+        print(f"Error revoking all tokens: {e}")
+        db_session.rollback()
+        return 0

@@ -4,11 +4,14 @@ import time
 import asyncio
 import websockets
 import re
+from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 import msg_pb2
-from database import init_db, authenticate_user, get_auth_token, upsert_auth, find_user_by_username, get_auth_data
+from database import init_db, authenticate_user, get_auth_token, upsert_auth, find_user_by_username, get_auth_data, revoke_all_tokens, is_token_valid_for_today
 from auth_utils import authenticate_broker, handle_auth_success, mask_api_credential
 
 # Load environment variables
@@ -31,8 +34,48 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # Initialize database
 init_db()
 
+# Global WebSocket control flags (SEBI compliance)
+websocket_enabled = False
+websocket_task = None
+
 # Global order book storage for maintaining full depth
 order_books = {}
+
+# Initialize scheduler for SEBI compliance (midnight token revocation)
+scheduler = BackgroundScheduler(daemon=True)
+
+def midnight_token_cleanup():
+    """Revoke all tokens at 3:00 AM for SEBI compliance"""
+    global websocket_enabled
+    print(f"\n{'='*60}")
+    print(f"[SEBI COMPLIANCE] Running midnight token cleanup at {datetime.now()}")
+    print(f"{'='*60}")
+
+    # Revoke all tokens
+    count = revoke_all_tokens()
+
+    # Stop WebSocket connections
+    websocket_enabled = False
+
+    print(f"[SEBI COMPLIANCE] Midnight cleanup complete:")
+    print(f"  - Revoked {count} token(s)")
+    print(f"  - WebSocket disabled")
+    print(f"  - Users must re-authenticate")
+    print(f"{'='*60}\n")
+
+# Schedule midnight cleanup at 3:00 AM every day
+scheduler.add_job(
+    func=midnight_token_cleanup,
+    trigger=CronTrigger(hour=3, minute=0),
+    id='midnight_token_cleanup',
+    name='SEBI Compliance - Midnight Token Cleanup',
+    replace_existing=True
+)
+
+# Start the scheduler
+scheduler.start()
+print(f"[SCHEDULER] Started APScheduler for SEBI compliance")
+print(f"[SCHEDULER] Midnight token cleanup scheduled for 3:00 AM daily")
 
 def update_order_book(ticker, bids, asks, tbq, tsq, timestamp, is_snapshot):
     """Enhanced order book update with guaranteed 50-level depth maintenance"""
@@ -415,35 +458,59 @@ websocket = None
 last_ping_time = 0
 
 async def websocket_client():
-    global websocket, last_ping_time
-    
+    """
+    WebSocket client with SEBI compliance:
+    - Only connects when user is logged in (session active)
+    - Only connects when token is valid for today
+    - Stops when websocket_enabled is False
+    """
+    global websocket, last_ping_time, websocket_enabled
+
+    print("[WEBSOCKET] WebSocket client task started (waiting for login)")
+
     while True:
         try:
-            # Get auth data from database - only proceed if user is logged in
+            # CRITICAL: Check if WebSocket is enabled (SEBI compliance)
+            if not websocket_enabled:
+                # Wait for user to login
+                await asyncio.sleep(5)
+                continue
+
+            # Get auth data from database
             from database import db_session, Auth
             active_auth = db_session.query(Auth).filter_by(is_revoked=False, broker='fyers').first()
-            
+
             if not active_auth:
-                print("No active authentication found in database, waiting for login...")
+                print("[WEBSOCKET] No active authentication found, waiting...")
+                websocket_enabled = False
                 await asyncio.sleep(10)
                 continue
-            
+
+            # SEBI COMPLIANCE: Check if token is valid for today
+            if not is_token_valid_for_today(active_auth.name):
+                print(f"[WEBSOCKET] Token for {active_auth.name} is not valid for today")
+                websocket_enabled = False
+                await asyncio.sleep(10)
+                continue
+
             # Get all auth data including API key and auth token
             auth_data = get_auth_data(active_auth.name)
-            
+
             if not auth_data or not auth_data['auth_token'] or not auth_data['api_key']:
-                print("No valid auth data available, waiting...")
+                print("[WEBSOCKET] No valid auth data available, waiting...")
+                websocket_enabled = False
                 await asyncio.sleep(10)
                 continue
-                
+
             print("\n=== Attempting WebSocket Connection ===")
             auth_header = f"{auth_data['api_key']}:{auth_data['auth_token']}"
-            
+
             print(f"WebSocket URL: {WEBSOCKET_URL}")
             print(f"App ID: {auth_data['api_key']}")
             print(f"User: {active_auth.name}")
             print(f"Broker: {auth_data['broker']}")
-            
+            print(f"Login Date: {active_auth.login_date}")
+
             async with websockets.connect(
                 WEBSOCKET_URL,
                 extra_headers={
@@ -451,42 +518,56 @@ async def websocket_client():
                 }
             ) as ws:
                 websocket = ws
-                print("WebSocket connection established!")
-                
+                print("[WEBSOCKET] Connection established!")
+
                 # Subscribe to symbols
                 await subscribe_symbols()
                 last_ping_time = time.time()
-                
+
                 while True:
+                    # Check if WebSocket should be disabled (logout or midnight cleanup)
+                    if not websocket_enabled:
+                        print("[WEBSOCKET] WebSocket disabled, closing connection...")
+                        break
+
                     try:
                         # Send ping every 30 seconds
                         current_time = time.time()
                         if current_time - last_ping_time >= 30:
                             await ws.send("ping")
                             last_ping_time = current_time
-                            print("Ping sent")
-                        
-                        message = await ws.recv()
+                            print("[WEBSOCKET] Ping sent")
+
+                        # Receive message with timeout
+                        message = await asyncio.wait_for(ws.recv(), timeout=1.0)
+
                         if isinstance(message, bytes):
                             market_data = process_market_depth(message)
                             if market_data:
                                 print(f"[EMIT] Emitting market_depth data to frontend with {len(market_data)} symbols")
                                 socketio.emit('market_depth', market_data)
                         else:
-                            print(f"Received text message: {message}")
-                            
+                            print(f"[WEBSOCKET] Received text message: {message}")
+
+                    except asyncio.TimeoutError:
+                        # Normal timeout, continue loop
+                        continue
                     except websockets.ConnectionClosed:
-                        print("WebSocket connection closed")
+                        print("[WEBSOCKET] Connection closed")
                         break
                     except Exception as e:
-                        print(f"Error processing message: {e}")
-                        
+                        print(f"[WEBSOCKET] Error processing message: {e}")
+
         except Exception as e:
-            print(f"\n=== Connection Error ===")
-            print(f"Error: {str(e)}")
-            
-        print("\nRetrying connection in 5 seconds...")
-        await asyncio.sleep(5)
+            print(f"\n[WEBSOCKET] Connection Error: {str(e)}")
+
+        # Only retry if WebSocket is still enabled
+        if websocket_enabled:
+            print("[WEBSOCKET] Retrying connection in 5 seconds...")
+            await asyncio.sleep(5)
+        else:
+            print("[WEBSOCKET] WebSocket disabled, waiting for login...")
+            await asyncio.sleep(5)
 
 # Authentication Routes
 @app.route('/')
@@ -525,36 +606,44 @@ def broker_login():
 
 @app.route('/fyers/callback', methods=['GET'])
 def fyers_callback():
-    """Handle Fyers OAuth callback"""
+    """Handle Fyers OAuth callback and enable WebSocket"""
+    global websocket_enabled
+
     # Set default user if not in session
     if 'user' not in session:
         session['user'] = 'fyers_user'
-    
+
     auth_code = request.args.get('auth_code') or request.args.get('code')
     error = request.args.get('error')
-    
+
     if error:
         error_msg = f"OAuth error: {error}"
         print(error_msg)
         return redirect(url_for('broker_login') + f'?error={error_msg}')
-    
+
     if not auth_code:
         error_msg = "No authorization code received"
         print(error_msg)
         return redirect(url_for('broker_login') + f'?error={error_msg}')
-    
+
     print(f'Fyers broker callback - auth code: {auth_code}')
-    
+
     auth_token, error_message = authenticate_broker(auth_code)
-    
+
     if auth_token:
         username = session['user']
         success = handle_auth_success(auth_token, username, 'fyers')
-        
+
         if success:
             session['logged_in'] = True
             session['broker'] = 'fyers'
-            print(f'Successfully authenticated user {username} with Fyers')
+            session['login_date'] = datetime.now().strftime('%Y-%m-%d')
+
+            # CRITICAL: Enable WebSocket ONLY after successful login
+            websocket_enabled = True
+
+            print(f'[AUTH] Successfully authenticated user {username} with Fyers')
+            print(f'[AUTH] WebSocket enabled for session')
             return redirect(url_for('dashboard'))
         else:
             error_msg = "Failed to store authentication token"
@@ -566,32 +655,60 @@ def fyers_callback():
 
 @app.route('/dashboard')
 def dashboard():
-    """Main dashboard with DOM display"""
+    """Main dashboard with DOM display - with SEBI compliance check"""
+    global websocket_enabled
+
     if not session.get('logged_in'):
         return redirect(url_for('broker_login'))
-    
+
     # Set default user if not in session
     if 'user' not in session:
         session['user'] = 'fyers_user'
-    
+
     username = session['user']
+
+    # SEBI COMPLIANCE: Check if token is valid for today
+    if not is_token_valid_for_today(username):
+        print(f"[SEBI COMPLIANCE] Token for {username} is expired or invalid for today")
+        session.clear()
+        websocket_enabled = False
+        return redirect(url_for('broker_login') + '?error=Session expired. Please login again (SEBI compliance)')
+
+    # Check if login_date in session matches today
+    today = datetime.now().strftime('%Y-%m-%d')
+    session_login_date = session.get('login_date')
+
+    if session_login_date != today:
+        print(f"[SEBI COMPLIANCE] Session login date {session_login_date} does not match today {today}")
+        session.clear()
+        websocket_enabled = False
+        return redirect(url_for('broker_login') + '?error=Session expired. Please login again (SEBI compliance)')
+
     auth_token = get_auth_token(username)
-    
+
     if not auth_token:
-        session.pop('logged_in', None)
+        print(f"[AUTH] No auth token found for {username}")
+        session.clear()
+        websocket_enabled = False
         return redirect(url_for('broker_login'))
-    
+
     return render_template('dashboard.html', symbol=SYMBOL, lot_size=LOT_SIZE)
 
 @app.route('/auth/logout')
 def logout():
-    """Logout route"""
+    """Logout route - revoke token and disable WebSocket"""
+    global websocket_enabled
+
     if session.get('logged_in'):
         username = session.get('user')
         if username:
             upsert_auth(username, "", "fyers", revoke=True)
-            print(f'Auth token revoked for user: {username}')
-    
+            print(f'[AUTH] Auth token revoked for user: {username}')
+
+    # CRITICAL: Disable WebSocket on logout
+    websocket_enabled = False
+    print(f'[AUTH] WebSocket disabled on logout')
+
     session.clear()
     return redirect(url_for('broker_login'))
 
